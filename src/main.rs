@@ -170,7 +170,9 @@ async fn handle_client_writer(
     mut out_rx: UnboundedReceiver<Message>,
 ) {
     while let Some(msg) = out_rx.recv().await {
-        // This sends to the handle_connection writer, the writer has access to the router, the writer will then send a message to the main
+        // So the router passes out_rx down to handle_connection, which creates this task and passes out_rx again
+        // So writer is the writer for the TcpStream, and since we have the out_rx from the original receiver we can catch
+        // messages from the router and pipe them to the stream's writer
         if let Err(e) = writer.send(msg).await {
             eprintln!("failed to send message to writer: {e}");
             break;
