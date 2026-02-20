@@ -6,10 +6,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
 };
-use tokio_tungstenite::{
-    WebSocketStream,
-    tungstenite::{Message, Utf8Bytes},
-};
+use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -30,6 +27,14 @@ enum Event {
     Disconnected {
         client_id: u64,
     },
+}
+
+#[derive(Serialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ServerMsg {
+    Chat { from: String, message: String },
+    Info { message: String },
+    Error { message: String },
 }
 
 #[tokio::main]
@@ -55,10 +60,19 @@ async fn main() -> Result<(), Error> {
 // mut is required because recv takes a &mut self
 async fn handle_router(mut received: UnboundedReceiver<Event>) {
     let mut clients: HashMap<u64, UnboundedSender<Message>> = HashMap::new();
+    let mut client_names: HashMap<u64, String> = HashMap::new();
+    let mut client_rev_lookup: HashMap<String, u64> = HashMap::new(); // Reverse lookup to also help with unique checks
+
     while let Some(ev) = received.recv().await {
         match ev {
             Event::Connected { client_id, out_tx } => {
-                if let Err(e) = out_tx.send(Message::Text(Utf8Bytes::from_static("Welcome!"))) {
+                if let Err(e) = out_tx.send(Message::Text(
+                    serde_json::to_string(&ServerMsg::Info {
+                        message: "Welcome".to_string(),
+                    })
+                    .unwrap()
+                    .into(),
+                )) {
                     eprintln!("failed to send welcome message: {e}");
                     continue;
                 }
@@ -67,9 +81,93 @@ async fn handle_router(mut received: UnboundedReceiver<Event>) {
             Event::Received { client_id, command } => {
                 match command {
                     Command::Register { name } => {
-                        println!("unimplemented");
+                        // Check name taken
+                        if client_rev_lookup.contains_key(&name) {
+                            let serialize_response = serde_json::to_string(&ServerMsg::Error {
+                                message: "Username taken".to_string(),
+                            })
+                            .unwrap(); // We unwrap here because this should never fail, in theory
+                            let client_sender = clients.get(&client_id);
+                            if let Some(client) = client_sender {
+                                if let Err(e) =
+                                    client.send(Message::Text(serialize_response.into()))
+                                {
+                                    eprintln!("failed to send error to client: {e}");
+                                    continue; // TODO: Drop this dead client
+                                }
+                            }
+                            continue;
+                        }
+
+                        // Check duplicate registration
+                        if client_names.contains_key(&client_id) {
+                            let serialize_response = serde_json::to_string(&ServerMsg::Error {
+                                message: "Already registered".to_string(),
+                            })
+                            .unwrap(); // We unwrap here because this should never fail, in theory
+                            let client_sender = clients.get(&client_id);
+                            if let Some(client) = client_sender {
+                                if let Err(e) =
+                                    client.send(Message::Text(serialize_response.into()))
+                                {
+                                    eprintln!("failed to send error to client: {e}");
+                                    continue; // TODO: Drop this dead client
+                                }
+                            }
+                            continue;
+                        }
+
+                        if name.len() < 3 || name.len() > 24 {
+                            let serialize_response = serde_json::to_string(&ServerMsg::Error {
+                                message: "Invalid name".to_string(),
+                            })
+                            .unwrap(); // We unwrap here because this should never fail, in theory
+                            let client_sender = clients.get(&client_id);
+                            if let Some(client) = client_sender {
+                                if let Err(e) =
+                                    client.send(Message::Text(serialize_response.into()))
+                                {
+                                    eprintln!("failed to send error to client: {e}");
+                                    continue; // TODO: Drop this dead client
+                                }
+                            }
+                            continue;
+                        }
+
+                        // Add to client name map and reverse lookup
+                        client_names.insert(client_id, name.clone());
+                        client_rev_lookup.insert(name, client_id);
+                        let client_sender = clients.get(&client_id);
+                        client_sender
+                            .unwrap()
+                            .send(Message::Text(
+                                serde_json::to_string(&ServerMsg::Info {
+                                    message: "Registered succesfully".to_string(),
+                                })
+                                .unwrap()
+                                .into(),
+                            ))
+                            .unwrap(); // DO THE MONSTER MASH (monster function)
                     }
                     Command::Say { message } => {
+                        // Check the user has registered
+                        if !client_names.contains_key(&client_id) {
+                            let client_sender = clients.get(&client_id).unwrap();
+                            client_sender
+                                .send(Message::Text(
+                                    serde_json::to_string(&ServerMsg::Error {
+                                        message: "You must register first".to_string(),
+                                    })
+                                    .unwrap()
+                                    .into(),
+                                ))
+                                .unwrap();
+                            continue;
+                        }
+
+                        // We can unwrap since we just checked if they have a name
+                        let client_name = client_names.get(&client_id).unwrap();
+
                         // This one broadcasts
                         let broadcast_recipients =
                             clients.iter().filter(|(id, _)| **id != client_id);
@@ -80,7 +178,14 @@ async fn handle_router(mut received: UnboundedReceiver<Event>) {
                             clients_to_send_to.push((*recipient_id, recipient_sender.clone()));
                         }
 
-                        let outgoing_message = Message::Text(message.clone().into());
+                        let outgoing_message = Message::Text(
+                            serde_json::to_string(&ServerMsg::Chat {
+                                from: client_name.clone(),
+                                message: message.clone(),
+                            })
+                            .unwrap()
+                            .into(),
+                        );
 
                         let mut dead_clients: Vec<u64> = vec![];
                         for (client_to_send_id, client_sender) in clients_to_send_to {
@@ -100,9 +205,12 @@ async fn handle_router(mut received: UnboundedReceiver<Event>) {
                 }
             }
             Event::Disconnected { client_id } => {
+                // Remove from maps
                 clients.remove(&client_id);
+                if let Some(name) = client_names.remove(&client_id) {
+                    client_rev_lookup.remove(&name);
+                }
             }
-            _ => println!("unimplemented"),
         }
     }
 }
