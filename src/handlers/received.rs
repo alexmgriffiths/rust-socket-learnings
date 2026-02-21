@@ -3,7 +3,6 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::commands::register::{self, RegisterError};
 use crate::commands::say::{self, SayError};
 use crate::protocol::ServerMsg;
-use crate::send::broadcast_ws_msg;
 use crate::{protocol::Command, state::RouterState};
 
 pub fn handle_received_event(router_state: &mut RouterState, client_id: u64, command: Command) {
@@ -72,7 +71,7 @@ pub fn handle_received_event(router_state: &mut RouterState, client_id: u64, com
             };
 
             let message_to_send = Message::Text(message_to_broadcast_raw.into());
-            broadcast_ws_msg(router_state, message_to_send, Some(client_id));
+            router_state.broadcast_ws_msg(message_to_send, Some(client_id));
         }
     }
 }
