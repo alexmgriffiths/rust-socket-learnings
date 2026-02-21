@@ -16,7 +16,7 @@ pub fn handle_say_command(
     }
 
     // The chat message is valid
-    if message.len() == 0 || message.len() > 256 {
+    if message.is_empty() || message.len() > 256 || !message.is_ascii() {
         return Err(SayError::InvalidMessage);
     }
 
