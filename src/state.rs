@@ -54,9 +54,21 @@ impl RouterState {
     ) {
         // We don't need to do much here, just account for ClientError
         // The caller will worry about SerializationError
-        if let Err(_e) = send_ws_msg(tx, msg.clone()) {
+        if send_ws_msg(tx, msg.clone()).is_err() {
             self.disconnect_client(client_id);
         }
+    }
+
+    pub fn broadcast_server_msg(&mut self, msg: &ServerMsg, skip_client: Option<u64>) {
+        let raw = match serde_json::to_string(msg) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Serialization error: {e}");
+                return;
+            }
+        };
+
+        self.broadcast_ws_msg(Message::Text(raw.into()), skip_client);
     }
 
     pub fn broadcast_ws_msg(&mut self, message: Message, skip_client: Option<u64>) {

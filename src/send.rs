@@ -4,7 +4,6 @@ use tokio::sync::mpsc::error::SendError;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::protocol::ServerMsg;
-use crate::state::RouterState;
 
 // We split these so the handlers can either deal with SE, or disconnect
 // Dead client on ClientError
