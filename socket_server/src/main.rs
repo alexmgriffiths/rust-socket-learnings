@@ -1,4 +1,5 @@
 mod commands;
+mod conversation;
 mod handlers;
 mod protocol;
 mod router;
@@ -15,20 +16,24 @@ use tokio::{
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    dotenvy::dotenv().ok();
+
     let (tx, rx) = mpsc::unbounded_channel::<Event>(); // Don't set a fixed size of messages
     // In the future we should really use a bounded channel and handle back pressure... :/
 
-    let try_socket = TcpListener::bind("127.0.0.1:9901").await;
-    let listener = try_socket.expect("failed to bind");
+    let listener = TcpListener::bind("127.0.0.1:9901")
+        .await
+        .expect("failed to bind socket");
     println!("Listening on 127.0.0.1:9901");
 
     tokio::spawn(handle_router(rx));
 
     let mut next_id: u64 = 0;
+
     while let Ok((stream, _)) = listener.accept().await {
         tokio::spawn(handle_connection(tx.clone(), stream, next_id));
         next_id += 1;
     }
 
-    return Ok(());
+    Ok(())
 }

@@ -1,0 +1,103 @@
+services:
+  auth-db:
+    image: postgres:16
+    container_name: auth-db
+    environment:
+      POSTGRES_DB: auth
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_pass
+    ports:
+      - "5433:5432" # host:container (avoid clashing with local postgres)
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - app-net
+
+  chat-db:
+    image: postgres:16
+    container_name: chat-db
+    environment:
+      POSTGRES_DB: chat
+      POSTGRES_USER: chat_user
+      POSTGRES_PASSWORD: chat_pass
+    ports:
+      - "5434:5432"
+    volumes:
+      - chat_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chat_user -d chat"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - app-net
+
+  # Optional: Auth service (uncomment when you have a Dockerfile)
+  # auth-service:
+  #   build:
+  #     context: ./auth
+  #     dockerfile: Dockerfile
+  #   container_name: auth-service
+  #   environment:
+  #     DATABASE_URL: postgres://auth_user:auth_pass@auth-db:5432/auth
+  #     RUST_LOG: info
+  #     # JWT_SECRET: "dev-only-secret"
+  #   depends_on:
+  #     auth-db:
+  #       condition: service_healthy
+  #   ports:
+  #     - "8081:8081"
+  #   networks:
+  #     - app-net
+
+  # Optional: Chat/socket service (uncomment when you have a Dockerfile)
+  # chat-service:
+  #   build:
+  #     context: ./chat
+  #     dockerfile: Dockerfile
+  #   container_name: chat-service
+  #   environment:
+  #     DATABASE_URL: postgres://chat_user:chat_pass@chat-db:5432/chat
+  #     AUTH_BASE_URL: http://auth-service:8081
+  #     RUST_LOG: info
+  #   depends_on:
+  #     chat-db:
+  #       condition: service_healthy
+  #     # auth-service:
+  #     #   condition: service_started
+  #   ports:
+  #     - "8082:8082"
+  #     # if you have a raw TCP socket server:
+  #     - "9000:9000"
+  #   networks:
+  #     - app-net
+
+  # Optional DB UI
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      auth-db:
+        condition: service_healthy
+      chat-db:
+        condition: service_healthy
+    networks:
+      - app-net
+
+volumes:
+  auth_db_data:
+  chat_db_data:
+
+networks:
+  app-net:
+    driver: bridge

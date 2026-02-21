@@ -1,3 +1,5 @@
+use std::env;
+
 use crate::{
     handlers::{
         connected::handle_connected_event, disconnected::handle_disconnected_event,
@@ -8,6 +10,7 @@ use crate::{
 };
 
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
+use jsonwebtoken::DecodingKey;
 use tokio::{
     net::TcpStream,
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -15,7 +18,9 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
 pub async fn handle_router(mut received: UnboundedReceiver<Event>) {
-    let mut router_state: RouterState = RouterState::new();
+    let decoding_key =
+        DecodingKey::from_secret(env::var("JWT_SECRET").expect("no JWT_SECRET set").as_ref());
+    let mut router_state: RouterState = RouterState::new(decoding_key);
 
     while let Some(ev) = received.recv().await {
         match ev {
@@ -33,9 +38,13 @@ pub async fn handle_router(mut received: UnboundedReceiver<Event>) {
 }
 
 pub async fn handle_connection(tx: UnboundedSender<Event>, stream: TcpStream, client_id: u64) {
-    let ws_stream = tokio_tungstenite::accept_async(stream)
-        .await
-        .expect("Error during websocket handshake");
+    let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            eprintln!("client {client_id}: websocket handshake failed: {e}");
+            return;
+        }
+    };
     let (out_tx, out_rx) = mpsc::unbounded_channel::<Message>();
 
     // Tell the main router thread that this user is connected
@@ -53,9 +62,8 @@ pub async fn handle_connection(tx: UnboundedSender<Event>, stream: TcpStream, cl
     while let Some(item) = reader.next().await {
         match item {
             Ok(Message::Text(t)) => {
-                let raw_command = t.to_string();
                 // Just forward commands to the router
-                match serde_json::from_str(&raw_command) {
+                match serde_json::from_str(&t) {
                     Ok(value) => {
                         if let Err(e) = tx.send(Event::Received {
                             client_id,
@@ -77,16 +85,13 @@ pub async fn handle_connection(tx: UnboundedSender<Event>, stream: TcpStream, cl
             Err(_) => {
                 break;
             }
-            _ => {
-                println!("unimplemented");
-            }
+            _ => {}
         }
     }
 
     // If we broke out of the reader, it's because the client disconnected... probably.
     if let Err(e) = tx.send(Event::Disconnected { client_id }) {
         eprintln!("failed to send disconnect event: {e}");
-        return;
     }
 }
 

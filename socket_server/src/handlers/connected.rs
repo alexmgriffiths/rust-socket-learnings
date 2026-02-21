@@ -10,15 +10,16 @@ pub fn handle_connected_event(
 ) {
     // We could probably check serialization error here,
     // But it's kinda useless since this is a hard-coded string
-    if let Err(_) = send_server_msg(
+    if send_server_msg(
         &out_tx,
         &ServerMsg::Info {
             message: "Welcome!".to_string(),
         },
-    ) {
-        // Don't insert the client on failure
+    )
+    .is_err()
+    {
         return;
     }
 
-    router_state.clients.insert(client_id, out_tx);
+    router_state.connections.insert(client_id, out_tx);
 }
