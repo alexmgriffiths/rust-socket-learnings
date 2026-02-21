@@ -73,10 +73,6 @@ impl RouterState {
         }
 
         for (id, tx) in senders {
-            // TODO: Optimize
-            // Performance can be gained here by removing ServerMsg
-            // Because ServerMsg uses serde_json on every loop,
-            // We could serialize once then send, but that requires a larger refactor
             self.send_or_disconnect_ws_msg(id, &tx, &message);
         }
     }
